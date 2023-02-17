@@ -78,34 +78,27 @@ multiple languages are shown below. To learn more, check out our docs about
 
 
 ```python
-import psycopg2
+import psycopg as pg
+import time
 
-connection = None
-cursor = None
-try:
-    connection = psycopg2.connect(
-        user='admin',
-        password='quest',
-        host='127.0.0.1',
-        port='8812',
-        database='qdb')
-    cursor = connection.cursor()
-    postgreSQL_select_Query = 'SELECT x FROM long_sequence(5);'
-    cursor.execute(postgreSQL_select_Query)
-    print('Selecting rows from test table using cursor.fetchall')
-    mobile_records = cursor.fetchall()
+# Connect to an existing QuestDB instance
 
-    print("Print each row and it's columns values")
-    for row in mobile_records:
-        print("y = ", row[0], "\n")
-except (Exception, psycopg2.Error) as error:
-    print("Error while fetching data from PostgreSQL", error)
-finally:
-    if cursor:
-        cursor.close()
-    if connection:
-        connection.close()
-    print("PostgreSQL connection is closed")
+conn_str = 'user=admin password=quest host=127.0.0.1 port=8812 dbname=qdb'
+with pg.connect(conn_str, autocommit=True) as connection:
+    
+    # Open a cursor to perform database operations
+
+    with connection.cursor() as cur:
+
+        #Query the database and obtain data as Python objects.
+
+        cur.execute('SELECT * FROM trades_pg;')
+        records = cur.fetchall()
+        for row in records:
+            print(row)
+
+# the connection is now closed
+
 ```
 
 </TabItem>
