@@ -41,12 +41,6 @@ In summary, these are the different options:
   - SQL `INSERT` statements.
   - Use `curl` on the command line.
 
-## InfluxDB Line Protocol
-
-The InfluxDB Line Protocol (ILP) is a text protocol over TCP on port 9009.
-
-It is a one-way protocol to insert data, focusing on simplicity and performance.
-
 Here is a summary table showing how it compares with other ways to insert data
 that we support:
 
@@ -56,6 +50,12 @@ that we support:
 | CSV upload via HTTP REST | Configurable                     | Very Good                           |
 | SQL `INSERT` statements  | Transaction-level                | Good                                |
 | SQL `COPY` statements    | Transaction-level                | Suitable for one-off data migration |
+
+## InfluxDB Line Protocol
+
+The InfluxDB Line Protocol (ILP) is a text protocol over TCP on port 9009.
+
+It is a one-way protocol to insert data, focusing on simplicity and performance.
 
 This interface is the preferred ingestion method as it provides the following
 benefits:
@@ -214,131 +214,6 @@ socket_close($socket);
 
 </Tabs>
 
-
-### Timestamps
-
-Providing a timestamp is optional. If one isn't provided, the server will
-automatically assign the server's system time as the row's timestamp value.
-
-Timestamps are interpreted as the number of nanoseconds from 1st Jan 1970 UTC,
-unless otherwise configured. See `cairo.timestamp.locale` and
-`line.tcp.timestamp` [configuration options](/docs/reference/configuration).
-
-### ILP Datatypes and Casts
-
-#### Strings vs Symbols
-
-Strings may be recorded as either the `STRING` type or the `SYMBOL` type.
-
-Inspecting a sample ILP we can see how a space `' '` separator splits `SYMBOL`
-columns to the left from the rest of the columns.
-
-```text
-table_name,col1=symbol_val1,col2=symbol_val2 col3="string val",col4=10.5
-                                            ┬
-                                            ╰───────── separator
-```
-
-In this example, columns `col1` and `col2` are strings written to the database
-as `SYMBOL`s, whilst `col3` is written out as a `STRING`.
-
-`SYMBOL`s are strings with which are automatically
-[interned](https://en.wikipedia.org/wiki/String_interning) by the database on a
-per-column basis. You should use this type if you expect the string to be
-re-used over and over, such as is common with identifiers.
-
-For one-off strings use `STRING` columns which aren't interned.
-
-#### Casts
-
-QuestDB types are a superset of those supported by ILP. This means that when
-sending data you should be aware of the performed conversions.
-
-See:
-
-- [QuestDB Types in SQL](/docs/reference/sql/datatypes)
-- [ILP types and cast conversion tables](/docs/reference/api/ilp/columnset-types)
-
-### Constructing well-formed messages
-
-Different library implementations will perform different degrees content
-validation upfront before sending messages out. To avoid encountering issues,
-follow these guidelines:
-
-- **All strings must be UTF-8 encoded.**
-
-- **Columns should only appear once per row.**
-
-- **Symbol columns must be written out before other columns.**
-
-- **Table and column names can't have invalid characters.** These should not
-  contain `?`, `.`,`,`, `'`, `"`, `\`, `/`, `:`, `(`, `)`, `+`, `-`, `*`, `%`,
-  `~`,`' '` (space), `\0` (nul terminator),
-  [ZERO WIDTH NO-BREAK SPACE](https://unicode-explorer.com/c/FEFF).
-
-- **Write timestamp column via designated API**, or at the end of the message if
-  you are using raw sockets. If you have multiple timestamp columns write
-  additional ones as column values.
-
-- **Don't change column type between rows.**
-
-- **Supply timestamps in order.** These need to be at least equal to previous
-  ones in the same table, unless using the out of order feature. This is not
-  necessary if you use the [out-of-order](/docs/guides/out-of-order-commit-lag)
-  feature.
-
-### Errors in Server Logs
-
-QuestDB will always log any ILP errors in its
-[server logs](/docs/concept/root-directory-structure#log-directory).
-
-Here is an example error from the server logs caused when a line attempted to
-insert a `STRING` into a `SYMBOL` column.
-
-```text
-2022-04-13T13:35:19.784654Z E i.q.c.l.t.LineTcpConnectionContext [3968] could not process line data [table=bad_ilp_example, msg=cast error for line protocol string [columnWriterIndex=0, columnType=SYMBOL], errno=0]
-2022-04-13T13:35:19.784670Z I tcp-line-server scheduling disconnect [fd=3968, reason=0]
-```
-
-### Inserting NULL values
-
-To insert a NULL value, skip the column (or symbol) for that row.
-
-For example:
-
-```text
-table1 a=10.5 1647357688714369403
-table1 b=1.25 1647357698714369403
-```
-
-Will insert as:
-
-| a      | b      | timestamp                   |
-| :----- | :----- | --------------------------- |
-| 10.5   | _NULL_ | 2022-03-15T15:21:28.714369Z |
-| _NULL_ | 1.25   | 2022-03-15T15:21:38.714369Z |
-
-### If you don't immediately see data
-
-If you don't see your inserted data, this is usually down to one of two things:
-
-- You prepared the messages, but forgot to call `.flush()` or similar in your
-  client library, so no data was sent.
-
-- The internal timers and buffers within QuestDB did not commit the data yet.
-  For development (and development only), you may want to tweak configuration
-  settings to commit data more frequently.
-  ```ini title=server.conf
-  cairo.max.uncommitted.rows=1
-  ```
-  Refer to
-  [ILP's commit strategy](/docs/reference/api/ilp/tcp-receiver/#commit-strategy)
-  documentation for more on these configuration settings.
-
-### Authentication
-
-ILP can additionally provide authentication. This is an optional feature which
-is documented [here](/docs/reference/api/ilp/authenticate).
 
 ### Third-party Library Compatibility
 
