@@ -20,13 +20,12 @@ languages: [ILP client libraries](/docs/reference/clients/overview).
 
 :::
 
-## Examples
+## Usage
+
+This section provides usage information and details for data ingestion via ILP.
 
 We provide examples in a number of programming languages. See our
-[ILP section](/docs/develop/insert-data#influxdb-line-protocol) of the "develop"
-docs.
-
-## Usage
+[ILP Insert Data](/docs/develop/insert-data#influxdb-line-protocol) for code snippets.
 
 ### Syntax
 

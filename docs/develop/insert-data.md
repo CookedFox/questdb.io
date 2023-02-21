@@ -53,7 +53,7 @@ that we support:
 
 ## InfluxDB Line Protocol
 
-The InfluxDB Line Protocol (ILP) is a text protocol over TCP on port 9009.
+The InfluxDB Line Protocol (ILP) is a text protocol over TCP on port `9009`.
 
 It is a one-way protocol to insert data, focusing on simplicity and performance.
 
@@ -213,13 +213,6 @@ socket_close($socket);
 
 
 </Tabs>
-
-
-### Third-party Library Compatibility
-
-Use our own [client libraries](/docs/reference/clients/overview) and/or protocol
-documentation: Clients intended to work with InfluxDB will not work with
-QuestDB.
 
 ## PostgreSQL wire protocol
 
