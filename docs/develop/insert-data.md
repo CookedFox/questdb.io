@@ -41,8 +41,7 @@ In summary, these are the different options:
   - SQL `INSERT` statements.
   - Use `curl` on the command line.
 
-Here is a summary table showing how it compares with other ways to insert data
-that we support:
+Here is a summary table comparing the different ways to insert data we support:
 
 | Protocol                 | Record Insertion Reporting       | Data Insertion Performance          |
 | :----------------------- | :------------------------------- | :---------------------------------- |
@@ -66,11 +65,6 @@ benefits:
 - Configurable commit-lag for out-of-order data via
   [server configuration](/docs/reference/configuration#influxdb-line-protocol-tcp)
   settings
-
-With sufficient client-side validation, the lack of errors to the client and
-confirmation isn't necessarily a concern: QuestDB will log out any issues and
-disconnect on error. The database will process any valid lines up to that point
-and insert rows.
 
 On the [InfluxDB line protocol](/docs/reference/api/ilp/overview) page, you may
 find additional details on the message format, ports and authentication.

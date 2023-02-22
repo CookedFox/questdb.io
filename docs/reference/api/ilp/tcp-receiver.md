@@ -74,6 +74,12 @@ The following input is tolerated by QuestDB:
 - timestamp appears as a column and is also present at the end of the line, the
   value sent as a field will be used
 
+
+With sufficient client-side validation, the lack of errors to the client and
+confirmation isn't necessarily a concern: QuestDB will log out any issues and
+disconnect on error. The database will process any valid lines up to that point
+and insert rows.
+
 ## Commit strategy
 
 :::note
