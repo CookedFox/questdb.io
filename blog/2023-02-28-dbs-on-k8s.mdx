@@ -1,0 +1,91 @@
+# Running Databases on K8s
+
+A few weeks ago, [Kelsey Hightower](https://twitter.com/kelseyhightower) [wrote a tweet](https://twitter.com/kelseyhightower/status/1624081136073994240) and held a [live discussion on Twitter](https://twitter.com/kelseyhightower/status/1624096644865327105) about whether it's a good idea or not to run a database on Kubernetes. This happened to be incredibly timely for me, since we at QuestDB are about to launch [our own cloud database service](https://questdb.io/cloud/) (built on top of k8s)!
+
+## "Rubbing kubernetes on your database [binary] will not turn it into RDS"
+
+One of the biggest takeaways of this discussion is that there seems to be a misconception about which features k8s provides. While newcomers to k8s may expect that it can handle complex application lifecycle features out-of-the-box, it in fact only provides a set of cloud-native primitives (or building blocks) for you to configure and deploy your workflows on top of. Any functionality outside of these core building blocks needs to be implemented somehow in additional orchestration code (usually in the form of an operator) or config.
+
+### K8s Primitives
+
+When working with databases, the obvious concern is data persistence. Earlier in its history, k8s really shined in the area of orchestrating stateless workloads, but support for stateful workflows was limited. Eventually, primitives like [StatefulSets](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/), [PersistentVolumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) (PVs), and PersistentVolumeClaims (PVCs) were developed to help orchestrate stateful workfloads on top of the existing platform.
+
+PersistentVolumes are abstractions that allow for the management of raw storage; ranging from local disk to NFS, cloud-specific block storage, and more. These work in concert with PersistentVolumeClaims that represent requests for a pod to access the storage managed by a PV. A user can bind a PVC to a PV to make an ownership claim on a set of raw disk resources encompassed by the PV. Then, you can add that PVC to any pod spec as a volume, effectively allowing you to mount any kind of persistent storage medium to a particular workload. The separation of PV and PVC also allows you to fully control the lifecycle of your underlying block storage, including mounting it to different workloads or freeing it altogether once the claim expires.
+
+StatefulSets manage the lifecycles of pods that require more stability than exists in other primitives like Deployments and ReplicaSets. By creating a StatefulSet, you can guarantee that when you remove a pod, the storage managed by its mounted PVCs does not get deleted along with it. You can imagine how useful this property is if you're hosting a database!  StatefulSets also allow for ordered deployment, scaling, and rolling updates, all of which create more predictability (and thus stability) in our workloads, also something that seems to go hand-in-hand with what you want out of your database's infrastructure.
+
+### What else?
+
+While StatefulSets, PVs and PVCs do quite a bit of work for us, there are still many actions that you need to perform on a production-level database. For example, how do you orchestrate backups and restores?  These can get quite complex when dealing with high-traffic databases that include functionality such as WALs. What about clustering and high availability?  Or version upgrades?  Are these operations zero-downtime?  Every database deals with these features in a different way, many of which require precise coordination between components to succeed. Kubernetes alone can't handle this. For example, you can't have a StatefulSet automatically set up your average RDBMS in a read-replica mode very easily without some additional orchestration.
+
+Not only do you have to implement many of these Day 2 features yourself, but you also need to deal with the ephemeral nature of Kubernetes workloads. To ensure peak performance, you have to guarantee that the k8s scheduler places your pods on nodes that are already pre-tuned to run your database, with enough free resources to properly run it. If you're dealing with clustering, how are you handling networking to ensure that database nodes are able to connect to each other (ideally in the same cloud region)?  This brings me to my next point...
+
+### Pets, not cattle
+
+Once you start accounting for things like node performance-tuning and networking, along with the requirement to store data persistently in-cluster, all of a sudden your infrastructure starts to grow into a set of carefully groomed pet servers instead of nameless herds of cattle. But one of the main benefits of running your application in k8s is the exact ability to treat your infrastructure like cattle instead of pets!  All of the most common abstractions like Deployments, Ingresses and Services, along with features like vertical and horizontal autoscaling, are made possible because you can run your workloads on a high-level set of infrastructure components so you don't have to worry about your physical infrastructure layer. This allows you to focus more on what you're trying to _achieve_ with your infrastructure instead of _how_ you're going to achieve it.
+
+### Then why even bother with k8s?
+
+Despite these rough edges, there are plenty of reasons to want to run your database on k8s. There's no denying that k8s' popularity has increased tremendously over the past few years across both startups and enterprises. The ecosystem is under constant development so that its featureset continues to expand and improve regularly. And the k8s operator model allows end users to programmatically manage their workloads by writing code against the core k8s APIs to automatically perform tasks that would previously be done manually. K8s allows for easy GitOps-style management so you can leverage battle-tested software development practices when managing infrastructure in a reproduceable and safe way. While vendor lock-in still exists in the world of k8s, its effect can be minimized to make it easier for you to go multi-cloud (or even swap one for another).
+
+So if we want to take advantages of all the benefits that k8s has to offer while using it to host our database, what do we have to do?
+
+## What _do_ you need to build an RDS on k8s?
+
+Towards the end of the chat, someone asked Kelsey what _do_ you actually need to build an RDS on k8s?  He jokingly answered with experience, funding, and customers. While we're certainly on the right track with these at QuestDB, I think that this can be better phrased in that you need to implement Day 2 Operations to get to what a typical managed database service would provide.
+
+### Day 2 Operations
+
+Day 2 Operations encompass many of the items that I've been discussing; backups, restores, stop/start, replication, high availability, and clustering. These are the features that differentiate a managed database service from a simple database hosted on k8s primitives, which is what I would call a Day 1 Operation. While k8s and its ecosystem can make it very easy to install a database in your cluster, connect it to your application, and get everything running in short order, you're going to eventually need to start thinking about Day 2 Operations once you get past the prototype phase.
+
+Here, I'll jump into more detail on what makes these operations so difficult to implement and why special care must be taken when implementing them, either by an end user or a managed database service provider.
+
+#### Stop/Start
+
+Stopping and starting databases is a common operation in today's DevOps practices, and is a must-have for any fully-featured managed database service. It is pretty easy to find at least one reason for wanting to stop-and-start a database. For example, you may want to have a database used for running integration tests that run on a pre-specified schedule. Or you maybe have a shared instance that's used by a development team for live QA before merging a commit. You could always create and delete database instances on-demand, but it is sometimes easier to have a reference to a static database connection string and url.
+
+While this can be automated in k8s (perhaps by simply setting a StatefulSet's replica count to 0), there are still other aspects that need to be considered. If you're shutting down a database to save some money, will you also be spinning down any infrastructure?  If so, how can you ensure that this infrastructure will be available when you start the database back up?  K8s provides primitives like node affinity and taints to help solve this problem, but everyone's infrastructure provisioning situation and budget is different, and there's not a one-size-fits-all approach to this problem.
+
+#### Backup & Restore
+
+One interesting point Kelsey made in his chat was that having the ability to start an instance from scratch (moving from a `stopped` -> `running` state), is not trivial. Many challenges need to be solved, including finding the appropriate infrastructure to run the database, setting up network connectivity, mounting the correct volume, and ensuring data integrity once the volume has been mounted. In fact, this is such an in-depth topic, that Kelsey compares going from 0 -> 1 running instance to an actual backup-and-restore test. If you can indeed spin up an instance from scratch while loading up pre-existing data, you have successfully completed a live restore test.
+
+TODO: talk about taking backups, accessing them, lifecycles & persistence, which medium to use?
+
+#### Replication, HA and Clustering
+
+These days, you can get very far by simply vertically scaling your database. The performance of modern databases can be sufficient for almost anyone's use case if you throw enough resources at the problem. But once you've reached a certain scale, or require features like high availability, there is a reason to enable some of the more advanced database management features like clustering and replication.
+
+Once you start down this path, the amount of infrastructure orchestration complexity can increase exponentially. You need to start thinking more about networking and physical node placement to achieve your desired goal. If you don't have a centralized monitoring, logging, and telemetry solution, you're now going to need one if you want to easily diagnose issues and get the best performance out of your infrastructure. Based on its architecture and featureset, every database can have different options for enabling clustering, many of which require intimate knowledge of the inner workings of the database to choose the correct settings.
+
+Vanilla k8s knows nothing of these complexities. This all need to be orchestrated by an administrator or operator (human or automated). If you're working with production data, this may need to happen with close-to-zero downtime. This is where managed database services shine. They can make some of these features as easy to configure as a single web form with a checkbox or two and some input fields. Unless you're willing to invest the time into developing these solutions yourself, sometimes it's worth giving up some level of control for automated expert assistance when configuring a database cluster.
+
+### Orchestration
+
+For your Day 2 Operations to work like they would in a managed database service such as RDS, they need to be automated. Lucky for us, there are several ways to build automation around your database on k8s.
+
+#### Helm & Yaml tools won't get us there
+
+Since k8s configuration is declarative, it can be very easy to get from 0 -> 1 with traditional yaml-based tooling like Helm or cdk8s. Many industry-leading k8s tools install into a cluster with a simple `helm install` or `kubectl apply` command.
+
+These are sufficient for Day 1 Operations and non-scalable deployments. But as soon as you start to move into more vendor-specific Day 2 Operations that require more coordination across system components, the usefulness of traditional yaml-based tools starts to degrade quickly, since some imperative programming logic is now required.
+
+#### Provisioners
+
+One pattern that we've used to automate database management is using a provisioner process. When a user wants to make a change to an existing database's state, our backend sends a message to a queue that is eventually picked up by a provisioner. The provisioner reads the message, determines which actions to perform on the cluster, and performs them sequentially. Where appropriate, each action contains a rollback step in case of an apply error to leave the infrastructure in a predictable state. Progress is reported back to the application on a separate gossip queue, providing almost-immediate feedback to the user on the progress of each state change.
+
+While this has grown to be a powerful tool for us, there is another way to interact with the k8s API to manage resources...
+
+#### Operators
+
+TODO: Finish this
+K8s is extensible an [Operator pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/)
+
+
+## K8s is just a tool
+
+At the end of the day, k8s is a single tool in the DevOps engineer's toolkit. These days, it's possible to host workloads in a variety of ways; using managed services (PaaS), k8s, VMs, or even running on a bare metal server. The tool that you choose depends on a variety of factors including time, experience, performance requirements, ease of use, and cost.
+
+While hosting a database on k8s might be a fit for your organization, it just as easily could create even more overhead and instability if not done so carefully. Implementing the Day 2 features that I described above is time-consuming and costly to get right. Testing is incredibly important, since you want to be absolutely sure that your (and your customers') precious data is kept safe and accessible when it's needed.
+
+We've spent the past year building our own managed database service on top of k8s. If you want to check out what we've built on top of k8s, you can visit [our cloud](https://questdb.io/cloud/) and check it!
