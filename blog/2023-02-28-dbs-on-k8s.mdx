@@ -2,7 +2,7 @@
 
 A few weeks ago, [Kelsey Hightower](https://twitter.com/kelseyhightower) [wrote a tweet](https://twitter.com/kelseyhightower/status/1624081136073994240) and held a [live discussion on Twitter](https://twitter.com/kelseyhightower/status/1624096644865327105) about whether it's a good idea or not to run a database on Kubernetes. This happened to be incredibly timely for me, since we at QuestDB are about to launch [our own cloud database service](https://questdb.io/cloud/) (built on top of k8s)!
 
-## "Rubbing kubernetes on your database [binary] will not turn it into RDS"
+## "Rubbing Kubernetes on your database [binary] will not turn it into RDS"
 
 One of the biggest takeaways of this discussion is that there seems to be a misconception about which features k8s provides. While newcomers to k8s may expect that it can handle complex application lifecycle features out-of-the-box, it in fact only provides a set of cloud-native primitives (or building blocks) for you to configure and deploy your workflows on top of. Any functionality outside of these core building blocks needs to be implemented somehow in additional orchestration code (usually in the form of an operator) or config.
 
@@ -32,7 +32,7 @@ So if we want to take advantages of all the benefits that k8s has to offer while
 
 ## What _do_ you need to build an RDS on k8s?
 
-Towards the end of the chat, someone asked Kelsey what _do_ you actually need to build an RDS on k8s?  He jokingly answered with experience, funding, and customers. While we're certainly on the right track with these at QuestDB, I think that this can be better phrased in that you need to implement Day 2 Operations to get to what a typical managed database service would provide.
+Towards the end of the chat, someone asked Kelsey what _do_ you actually need to build an RDS on k8s?  He jokingly answered with expertise, funding, and customers. While we're certainly on the right track with these at QuestDB, I think that this can be better phrased in that you need to implement Day 2 Operations to get to what a typical managed database service would provide.
 
 ### Day 2 Operations
 
@@ -50,7 +50,7 @@ While this can be automated in k8s (perhaps by simply setting a StatefulSet's re
 
 One interesting point Kelsey made in his chat was that having the ability to start an instance from scratch (moving from a `stopped` -> `running` state), is not trivial. Many challenges need to be solved, including finding the appropriate infrastructure to run the database, setting up network connectivity, mounting the correct volume, and ensuring data integrity once the volume has been mounted. In fact, this is such an in-depth topic, that Kelsey compares going from 0 -> 1 running instance to an actual backup-and-restore test. If you can indeed spin up an instance from scratch while loading up pre-existing data, you have successfully completed a live restore test.
 
-TODO: talk about taking backups, accessing them, lifecycles & persistence, which medium to use?
+Even if you have restores figured out, backups have their own complexities. K8s provides some useful building blocks like Jobs and CronJobs, which you can use if you want to take a one-off backup or create a backup schedule respectively. But these jobs need to be configured correctly in order to access raw database storage. Or if you can perform a backup using a CLI, then they need access to credentials to even connect to the database in the first place. You also need to make sure that these jobs have access to the underlying storage mechanism that you're using for these backups (which can be an entirely separate conversation in and of itself!). From an end-user standpoint, you also need to manage existing backups which includes creating an index and applying data retention policies and RBAC. Again, while K8s can help us build out these components, this is all work that needs to get done in order to add a usable backup-and-restore functionality to your infrastructure.
 
 #### Replication, HA and Clustering
 
@@ -78,14 +78,14 @@ While this has grown to be a powerful tool for us, there is another way to inter
 
 #### Operators
 
-TODO: Finish this
-K8s is extensible an [Operator pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/)
+K8s has an extensible [Operator pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/) that you can use to manage your own [Custom Resources](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/) (CRs) by setting up a controller that reconciles your current cluster state into its desired state, as specified by the CR yaml spec files. Controllers have the ability to hook into the k8s API server and listen for changes to resources inside your cluster. These changes get processed by a controller, which then kicks off a reconciliation loop where you can add your custom logic to perform any number of actions, ranging from simple to complex Day 2 Operations. This is an ideal solution to our management problem; we can offload much of our imperative code into a native k8s object and database-specific operations appear to be as seamless as the standard set of k8s building blocks. Many existing database products use operators to accomplish this, and more are currently in development (see the [Data on Kubernetes community](https://dok.community/) for more information on these efforts).
 
+As you can imagine, coordinating activities like backups, restores, and clustering inside a mostly stateless and idempotent reconciliation loop isn't the easiest. Even if you follow best practices and write a variety of simple controllers, each managing its own CR and with its own clear intention, writing the reconciliation logic is error-prone and time consuming. While frameworks like [Operator SDK](https://sdk.operatorframework.io/) exist to help you with scaffolding your operator, and libraries like [Kubebuilder](https://github.com/kubernetes-sigs/kubebuilder) provide a set of incredibly useful controller libraries, it's still a lot of work to undertake.
 
 ## K8s is just a tool
 
 At the end of the day, k8s is a single tool in the DevOps engineer's toolkit. These days, it's possible to host workloads in a variety of ways; using managed services (PaaS), k8s, VMs, or even running on a bare metal server. The tool that you choose depends on a variety of factors including time, experience, performance requirements, ease of use, and cost.
 
-While hosting a database on k8s might be a fit for your organization, it just as easily could create even more overhead and instability if not done so carefully. Implementing the Day 2 features that I described above is time-consuming and costly to get right. Testing is incredibly important, since you want to be absolutely sure that your (and your customers') precious data is kept safe and accessible when it's needed.
+While hosting a database on k8s might be a fit for your organization, it just as easily could create even more overhead and instability if not done carefully. Implementing the Day 2 features that I described above is time-consuming and costly to get right. Testing is incredibly important, since you want to be absolutely sure that your (and your customers') precious data is kept safe and accessible when it's needed.
 
 We've spent the past year building our own managed database service on top of k8s. If you want to check out what we've built on top of k8s, you can visit [our cloud](https://questdb.io/cloud/) and check it!
