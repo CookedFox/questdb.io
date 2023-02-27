@@ -100,12 +100,9 @@ TTL to 30s, announced it in company Slack and felt good about myself :)
 It took less than 30 minutes, and we got another failure:
 ![A screenshot from Slack where my colleague says: It didn't help](/img/blog/2023-02-28/slack2.png)
 
-<<<<<<< HEAD
-The failure had the same cause. Back to square one.
+The failure had the same cause as before. The fix did not work. Back to square
+one.
 
-=======
-The failure had the same cause as before. The fix did not work. Back to square one.
->>>>>>> 6b855458442ad75da7e0a0c7cf51a0ec7cd474ee
 ## The investigation, Part II
 
 Blind Googling combined with a bit of logical reasoning failed to produce
@@ -181,17 +178,19 @@ verbose logs produced an exception with this beautiful stack trace:
     2023-02-23T11:20:01.6084800Z at org.codehaus.plexus.classworlds.launcher.Launcher.mainWithExitCode (Launcher.java:406)
     2023-02-23T11:20:01.6085190Z at org.codehaus.plexus.classworlds.launcher.Launcher.main (Launcher.java:347)
 ```
+
 <<<<<<< HEAD
 
 It looks like a typically long and tedious Java stack trace. I noticed there was
 nothing about "Wagon". I knew [Wagon](https://maven.apache.org/wagon/) was a
+Maven component to download dependencies. Even my first fix attempt ======= It
+looks like a typically long and tedious Java stack trace. I noticed there was
+nothing about "Wagon". I knew [Wagon](https://maven.apache.org/wagon/) was a
 Maven component to download dependencies. Even my first fix attempt
-=======
-It looks like a typically long and tedious Java stack trace. I noticed there was nothing about "Wagon". I knew
-[Wagon](https://maven.apache.org/wagon/) was a Maven component to download dependencies. Even my first fix attempt
->>>>>>> 6b855458442ad75da7e0a0c7cf51a0ec7cd474ee
-[configured a Wagon-related property](https://github.com/questdb/questdb/pull/3012/files#diff-1494e9436657033af9f4bc2367589b709b4ecc2cf467a525bb99feef983f87baR21):
-`-Dmaven.wagon.httpconnectionManager.ttlSeconds=30`
+
+> > > > > > > 6b855458442ad75da7e0a0c7cf51a0ec7cd474ee
+> > > > > > > [configured a Wagon-related property](https://github.com/questdb/questdb/pull/3012/files#diff-1494e9436657033af9f4bc2367589b709b4ecc2cf467a525bb99feef983f87baR21):
+> > > > > > > `-Dmaven.wagon.httpconnectionManager.ttlSeconds=30`
 
 So it was suspicious I could not see anything Wagon-related in the exception
 stack trace. At this point, I resorted to the 3rd level of troubleshooting:
@@ -390,7 +389,6 @@ public void testRetryHandler_defaultCount_positive() throws Exception {
 
 Easy-peasy!
 
-<<<<<<< HEAD
 I sent the [Pull Request](https://github.com/apache/maven-resolver/pull/253) and
 was ready to forget about it. Merging a PR to new projects can take a while. To
 my surprise, the maintainers reviewed the PR less than 1 hour after submitting
@@ -401,14 +399,6 @@ wrong and when users are upset. They deserve recognition for what they do.
 [Tamas Cservenak](https://twitter.com/cstamas) and
 [Slawomir Jaranowski](https://twitter.com/SlawekJaran) helped me with the PR. If
 you are reading this: Thank you!
-=======
-I sent a [Pull Request](https://github.com/apache/maven-resolver/pull/253) and was ready to forget about it.
-Merging a PR to new projects can take a while. To my surprise, the maintainers reviewed the PR less than 1 hour after
-submitting it and merged it the next morning. Wow! This is the way to attract new contributors! I admire all people
-maintaining projects like Maven. They do it in their free time, and I reckon they mostly hear from users when something
-is wrong and when users are upset. They deserve recognition for what they do. [Tamas Cservenak](https://twitter.com/cstamas)
-and [Slawomir Jaranowski](https://twitter.com/SlawekJaran) helped me with the PR. If you are reading this: Thank you!
->>>>>>> 6b855458442ad75da7e0a0c7cf51a0ec7cd474ee
 
 What is the moral of the story?
 
