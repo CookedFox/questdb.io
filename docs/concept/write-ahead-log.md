@@ -49,7 +49,7 @@ table:
 
 | WAL table                                                                                  | Non-WAL table                                                                                                             |
 | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| Concurrent data ingestion via multiple interfaces                                          | ILP data locks the table for ingestion, concurrent data ingestion via other interfaces is not allowed - `Table Busy`error |
+| Concurrent data ingestion via multiple interfaces                                          | ILP locks the table for ingestion; concurrent data ingestion via other interfaces is not allowed - `Table Busy`error |
 | Unconstrained concurrent DDLs and DMLs                                                     | Concurrent DDLs and DMLs for ILP interface only                                                                           |
 | Asynchronous operations - in rare situations there may be slight delays in data visibility | Synchronous operations - no-wait commits                                                                                  |
 | Improved data freshness for `DROP` and `RENAME` of the table with a system-wide lock       | No change                                                                                                                 |
@@ -87,7 +87,7 @@ than a non-WAL table:
 
 A WAL table uses the following components to manage concurrent commit requests:
 
-- **WAL**: dedicated APIs for each ingestion interface. When data is ingested via
+- **WAL**: acts as a dedicated API for each ingestion interface. When data is ingested via
   multiple interfaces, dedicated `WALs` ensure that the table is not locked by
   one interface only.
 
