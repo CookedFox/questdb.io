@@ -8,7 +8,9 @@ One of the biggest takeaways of this discussion is that there seems to be a misc
 
 ### K8s Primitives
 
-When working with databases, the obvious concern is data persistence. Earlier in its history, k8s really shined in the area of orchestrating stateless workloads, but support for stateful workflows was limited. Eventually, primitives like [StatefulSets](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/), [PersistentVolumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) (PVs), and PersistentVolumeClaims (PVCs) were developed to help orchestrate stateful workfloads on top of the existing platform.
+When working with databases, the obvious concern is data persistence. Earlier in its history, k8s really shined in the area of orchestrating stateless workloads, but support for stateful workflows was limited. Eventually, primitives like [StatefulSets](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/), [PersistentVolumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) (PVs), and PersistentVolumeClaims (PVCs) were developed to help orchestrate stateful workloads on top of the existing platform.
+
+![K8s Component Diagram](/img/blog/2023-02-28/db-on-k8s-diagram.png)
 
 PersistentVolumes are abstractions that allow for the management of raw storage; ranging from local disk to NFS, cloud-specific block storage, and more. These work in concert with PersistentVolumeClaims that represent requests for a pod to access the storage managed by a PV. A user can bind a PVC to a PV to make an ownership claim on a set of raw disk resources encompassed by the PV. Then, you can add that PVC to any pod spec as a volume, effectively allowing you to mount any kind of persistent storage medium to a particular workload. The separation of PV and PVC also allows you to fully control the lifecycle of your underlying block storage, including mounting it to different workloads or freeing it altogether once the claim expires.
 
