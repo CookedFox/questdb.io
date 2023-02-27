@@ -196,7 +196,7 @@ access:
 
 This is the
 [source code of the Wagon implementation](https://github.com/apache/maven-wagon/blob/88e8574c69d83e6a658fcd2ad10f3f80926b8840/wagon-providers/wagon-http-shared/src/main/java/org/apache/maven/wagon/shared/http/AbstractHttpClientWagon.java#L560).
-It uses the [Apache HTTP Client](https://hc.apache.org/index.html) internally,
+It uses the Apache HTTP Client internally,
 and it configures it with a retry handler. There are different retry strategies
 available, and the exact details are unimportant. What is important is that the
 Wagon transport uses three retries by default.
