@@ -102,7 +102,6 @@ A WAL table uses the following components to manage concurrent commit requests:
   and sends them to the `TableWriter` to be committed.
 
 - **TableWriter**: updates the database and resolves any out-of-order data writes.
-  Each committed transaction is given a `txn` number.
 
 <Screenshot
   alt="Diagram showing the sequencer allocating txn numbers to events cronologically"
