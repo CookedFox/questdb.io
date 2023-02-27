@@ -1,5 +1,5 @@
 ---
-title: "The Tale of Unstable Builds and Open Source Infrastructure"
+title: "The Tale of Troubleshooting: Unstable Builds and Open Source Infrastructure"
 author: Jaromir Hamala
 author_title: QuestDB Team
 author_url: https://github.com/jerrinot
@@ -34,7 +34,7 @@ import Banner from "@theme/Banner"
   src="/img/blog/2023-02-28/xkcd_dependency.png"
   width={650}
 >
-  Source: <a href="https://xkcd.com/2347/">https://xkcd.com/2347/</a>
+  Source: <a href="https://xkcd.com/2347/">xkcd</a>
 </Banner>
 
 ## Surprise in logs
@@ -62,7 +62,7 @@ This is the most interesting part:
 
 The error comes from the
 [Apache Maven project](https://en.wikipedia.org/wiki/Apache_Maven), which we use
-to build [QuestDB](https://questdb.io/). Maven complains that it cannot download
+to build QuestDB. Maven complains that it cannot download
 the Maven Clean plugin from the Central repository. If this were just a one-off
 error, I would play it down as a network hiccup. However, we were getting the
 same error multiple times a day!
@@ -74,8 +74,7 @@ rather complex piece of technology: Google It!
 
 ![A picture of Yoda saying: "Use Google, You Must. Easy, it is. Answer, it shall provide.](/img/blog/2023-02-28/yoda.jpg)
 
-Eventually, I stumbled upon this issue:
-[https://issues.apache.org/jira/browse/WAGON-545](https://issues.apache.org/jira/browse/WAGON-545)
+Eventually, I stumbled upon [this issue](https://issues.apache.org/jira/browse/WAGON-545).
 
 It says that Azure Pipelines kill idle connections, which does not play nicely
 with the habit of Maven to pool and re-use HTTP connections. It was consistent
