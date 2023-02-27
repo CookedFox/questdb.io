@@ -74,7 +74,7 @@ Slack and felt good about myself:)
 It took less than 30 minutes, and we got another failure:
 ![A screenshot from Slack where my colleague says: It didn't help](/img/blog/2023-02-28/slack2.png)
 
-The failure had the same cause. Back to square one.
+The failure had the same cause as before. The fix did not work. Back to square one.
 ## The investigation, Part II
 Blind Googling combined with a bit of logical reasoning failed to produce results. There was only one answer: **WE NEED MOAR LOGS!**
 Running Maven with verbose logs produced an exception with this beautiful stack trace:
@@ -148,8 +148,6 @@ Running Maven with verbose logs produced an exception with this beautiful stack 
     2023-02-23T11:20:01.6084800Z at org.codehaus.plexus.classworlds.launcher.Launcher.mainWithExitCode (Launcher.java:406)
     2023-02-23T11:20:01.6085190Z at org.codehaus.plexus.classworlds.launcher.Launcher.main (Launcher.java:347)
 ```
-
-
 It looks like a typically long and tedious Java stack trace. I noticed there was nothing about "Wagon". I knew
 [Wagon](https://maven.apache.org/wagon/) was a Maven component to download dependencies. Even my first fix attempt
 [configured a Wagon-related property](https://github.com/questdb/questdb/pull/3012/files#diff-1494e9436657033af9f4bc2367589b709b4ecc2cf467a525bb99feef983f87baR21):
@@ -314,7 +312,7 @@ public void testRetryHandler_defaultCount_positive() throws Exception {
 
 Easy-peasy!
 
-I sent the [Pull Request](https://github.com/apache/maven-resolver/pull/253) and was ready to forget about it.
+I sent a [Pull Request](https://github.com/apache/maven-resolver/pull/253) and was ready to forget about it.
 Merging a PR to new projects can take a while. To my surprise, the maintainers reviewed the PR less than 1 hour after
 submitting it and merged it the next morning. Wow! This is the way to attract new contributors! I admire all people
 maintaining projects like Maven. They do it in their free time, and I reckon they mostly hear from users when something
