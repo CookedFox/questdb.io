@@ -1,0 +1,328 @@
+---
+title: "The tale of unstable builds and open source infrastructure"
+author: Jaromir Hamala
+author_title: QuestDB Team
+author_url: https://github.com/jerrinot
+author_image_url: https://avatars.githubusercontent.com/jerrinot
+description: A story about troubleshooting and fixing an issue in Apache Maven
+keywords:
+  - maven
+  - troubleshooting
+  - CI/CD
+  - open source
+tags: [maven, troubleshooting, CI/CD, open source]
+slug: maven-troubleshooting-story
+---
+
+Donald Knuth [famously wrote](https://dl.acm.org/doi/10.1145/356635.356640) that Premature Optimization is the root of all evil. I, for one, believe that all evil comes
+from spuriously failing builds. Nothing steals my confidence in a project as quickly as builds alternating between green
+and red for no reason. This is a story about unstable builds, troubleshooting and perhaps most importantly: My way to
+thank all contributors to basic software infrastructure. The infrastructure we all use and take for granted.
+
+<!--truncate-->
+
+![xkcd comic](/img/blog/2023-02-28/xkcd_dependency.png "Someday ImageMagick will finally break for good and we'll have a long period of scrambling as we try to reassemble civilization from the rubble.")
+
+Source: [https://xkcd.com/2347/](https://xkcd.com/2347/)
+
+## Surprise in logs
+Upon logging into [Azure Pipelines](https://azure.microsoft.com/en-gb/products/devops/pipelines/) to review the logs of
+multiple failed builds, I mentally braced myself for a potentially arduous troubleshooting session. I suspected that a race
+condition was the culprit, causing non-deterministic outcomes. Therefore, I was surprised when I discovered the actual
+reasons for the recent build failures. They were all similar to this:
+```
+2023-02-22T13:57:55.6111290Z [ERROR] Plugin org.apache. Maven.plugins:maven-clean-plugin:3.2.0 or one of its dependencies could not be resolved: Failed to read artifact descriptor for org.apache.maven.plugins:maven-clean-plugin:jar:3.2.0: Could not transfer artifact org.apache.maven.plugins:maven-clean-plugin:pom:3.2.0 from/to central (https://repo.maven.apache.org/maven2): Connection reset -> [Help 1]
+2023-02-22T13:57:55.6113250Z [ERROR]
+2023-02-22T13:57:55.6126660Z [ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+2023-02-22T13:57:55.6127480Z [ERROR] Re-run Maven using the -X switch to enable full debug logging.
+2023-02-22T13:57:55.6127880Z [ERROR]
+2023-02-22T13:57:55.6128720Z [ERROR] For more information about the errors and possible solutions, please read the following articles:
+2023-02-22T13:57:55.6129520Z [ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/PluginResolutionException
+```
+This is the most interesting part: `Could not transfer artifact org.apache.maven.plugins:maven-clean-plugin:pom:3.2.0 from/to central (https://repo.maven.apache.org/maven2): Connection reset -> [Help 1]`
+
+The error comes from the [Apache Maven project](https://en.wikipedia.org/wiki/Apache_Maven), which we use to build
+[QuestDB](https://questdb.io/). Maven complains that it cannot download the Maven Clean plugin from the Central
+repository. If this were just a one-off error, I would play it down as a network hiccup. However, we were getting the
+same error multiple times a day!
+
+## The investigation, Part I.
+
+I am no Maven expert, so I did what every developer does when troubleshooting a rather complex piece of technology: Google It!
+
+![A picture of Yoda saying: "Use Google, You Must. Easy, it is. Answer, it shall provide.](/img/blog/2023-02-28/yoda.jpg)
+
+Eventually, I stumbled upon this issue: [https://issues.apache.org/jira/browse/WAGON-545](https://issues.apache.org/jira/browse/WAGON-545)
+
+It says that Azure Pipelines kill idle connections, which does not play nicely with the habit of Maven to pool and
+re-use HTTP connections. It was consistent with what I saw in builds logs: Maven started tests, which ran for 20+ minutes
+and passed successfully. Then Maven wanted to download the Clean Plugin to do something else, but the download attempt
+failed, which killed the whole build.
+
+There was still one question unanswered: Why have we started getting this error only recently? Well, I had an explanation
+for this too: We keep adding tests, so they run longer. Azure Pipelines kill connections because the total test duration
+exceeds the idle connection timeout. It all made perfect sense.
+
+I also found a Maven configuration property to restrict the Time-To-Live of connections in the pool. The Maven issue I found said:
+> Azure users shall set the TTL to 240 seconds or less.
+
+
+So I [sent a Pull Request](https://github.com/questdb/questdb/pull/3012) to set TTL to 30s, announced it in company
+Slack and felt good about myself:)
+![A screenshot from Slack where I say: the Maven connection reset issues should be fixed for all new PR builds. let me know if you experience it again.](/img/blog/2023-02-28/slack1.png)
+
+It took less than 30 minutes, and we got another failure:
+![A screenshot from Slack where my colleague says: It didn't help](/img/blog/2023-02-28/slack2.png)
+
+The failure had the same cause. Back to square one.
+## The investigation, Part II
+Blind Googling combined with a bit of logical reasoning failed to produce results. There was only one answer: **WE NEED MOAR LOGS!**
+Running Maven with verbose logs produced an exception with this beautiful stack trace:
+
+```
+    [...]
+    2023-02-23T11:20:01.6052340Z Caused by: java.net.SocketException: Connection reset
+    2023-02-23T11:20:01.6052680Z at java.net.SocketInputStream.read (SocketInputStream.java:186)
+    2023-02-23T11:20:01.6053040Z at java.net.SocketInputStream.read (SocketInputStream.java:140)
+    2023-02-23T11:20:01.6053580Z at sun.security.ssl.SSLSocketInputRecord.read (SSLSocketInputRecord.java:484)
+    2023-02-23T11:20:01.6054000Z at sun.security.ssl.SSLSocketInputRecord.readHeader (SSLSocketInputRecord.java:478)
+    2023-02-23T11:20:01.6055020Z at sun.security.ssl.SSLSocketInputRecord.bytesInCompletePacket (SSLSocketInputRecord.java:70)
+    2023-02-23T11:20:01.6055500Z at sun.security.ssl.SSLSocketImpl.readApplicationRecord (SSLSocketImpl.java:1455)
+    2023-02-23T11:20:01.6055900Z at sun.security.ssl.SSLSocketImpl$AppInputStream.read (SSLSocketImpl.java:1066)
+    2023-02-23T11:20:01.6056310Z at org.apache.http.impl.io.SessionInputBufferImpl.streamRead (SessionInputBufferImpl.java:137)
+    2023-02-23T11:20:01.6056730Z at org.apache.http.impl.io.SessionInputBufferImpl.fillBuffer (SessionInputBufferImpl.java:153)
+    2023-02-23T11:20:01.6057150Z at org.apache.http.impl.io.SessionInputBufferImpl.readLine (SessionInputBufferImpl.java:280)
+    2023-02-23T11:20:01.6059200Z at org.apache.http.impl.conn.DefaultHttpResponseParser.parseHead (DefaultHttpResponseParser.java:138)
+    2023-02-23T11:20:01.6059980Z at org.apache.http.impl.conn.DefaultHttpResponseParser.parseHead (DefaultHttpResponseParser.java:56)
+    2023-02-23T11:20:01.6060470Z at org.apache.http.impl.io.AbstractMessageParser.parse (AbstractMessageParser.java:259)
+    2023-02-23T11:20:01.6060940Z at org.apache.http.impl.DefaultBHttpClientConnection.receiveResponseHeader (DefaultBHttpClientConnection.java:163)
+    2023-02-23T11:20:01.6061370Z at org.apache.http.impl.conn.CPoolProxy.receiveResponseHeader (CPoolProxy.java:157)
+    2023-02-23T11:20:01.6061790Z at org.apache.http.protocol.HttpRequestExecutor.doReceiveResponse (HttpRequestExecutor.java:273)
+    2023-02-23T11:20:01.6062210Z at org.apache.http.protocol.HttpRequestExecutor.execute (HttpRequestExecutor.java:125)
+    2023-02-23T11:20:01.6062610Z at org.apache.http.impl.execchain.MainClientExec.execute (MainClientExec.java:272)
+    2023-02-23T11:20:01.6063000Z at org.apache.http.impl.execchain.ProtocolExec.execute (ProtocolExec.java:186)
+    2023-02-23T11:20:01.6063370Z at org.apache.http.impl.execchain.RetryExec.execute (RetryExec.java:89)
+    2023-02-23T11:20:01.6063760Z at org.apache.http.impl.execchain.RedirectExec.execute (RedirectExec.java:110)
+    2023-02-23T11:20:01.6064170Z at org.apache.http.impl.client.InternalHttpClient.doExecute (InternalHttpClient.java:185)
+    2023-02-23T11:20:01.6064580Z at org.apache.http.impl.client.CloseableHttpClient.execute (CloseableHttpClient.java:72)
+    2023-02-23T11:20:01.6065000Z at org.eclipse.aether.transport.http.HttpTransporter.execute (HttpTransporter.java:363)
+    2023-02-23T11:20:01.6065400Z at org.eclipse.aether.transport.http.HttpTransporter.implGet (HttpTransporter.java:298)
+    2023-02-23T11:20:01.6065820Z at org.eclipse.aether.spi.connector.transport.AbstractTransporter.get (AbstractTransporter.java:72)
+    2023-02-23T11:20:01.6066260Z at org.eclipse.aether.connector.basic.BasicRepositoryConnector$GetTaskRunner.runTask (BasicRepositoryConnector.java:466)
+    2023-02-23T11:20:01.6066720Z at org.eclipse.aether.connector.basic.BasicRepositoryConnector$TaskRunner.run (BasicRepositoryConnector.java:383)
+    2023-02-23T11:20:01.6067180Z at org.eclipse.aether.util.concurrency.RunnableErrorForwarder.lambda$wrap$0 (RunnableErrorForwarder.java:73)
+    2023-02-23T11:20:01.6067660Z at org.eclipse.aether.connector.basic.BasicRepositoryConnector$DirectExecutor.execute (BasicRepositoryConnector.java:635)
+    2023-02-23T11:20:01.6068110Z at org.eclipse.aether.connector.basic.BasicRepositoryConnector.get (BasicRepositoryConnector.java:280)
+    2023-02-23T11:20:01.6068560Z at org.eclipse.aether.internal.impl.DefaultArtifactResolver.performDownloads (DefaultArtifactResolver.java:581)
+    2023-02-23T11:20:01.6069000Z at org.eclipse.aether.internal.impl.DefaultArtifactResolver.resolve (DefaultArtifactResolver.java:478)
+    2023-02-23T11:20:01.6069440Z at org.eclipse.aether.internal.impl.DefaultArtifactResolver.resolveArtifacts (DefaultArtifactResolver.java:278)
+    2023-02-23T11:20:01.6069880Z at org.eclipse.aether.internal.impl.DefaultArtifactResolver.resolveArtifact (DefaultArtifactResolver.java:255)
+    2023-02-23T11:20:01.6070350Z at org.apache.maven.repository.internal.DefaultArtifactDescriptorReader.loadPom (DefaultArtifactDescriptorReader.java:228)
+    2023-02-23T11:20:01.6071370Z at org.apache.maven.repository.internal.DefaultArtifactDescriptorReader.readArtifactDescriptor (DefaultArtifactDescriptorReader.java:169)
+    2023-02-23T11:20:01.6071950Z at org.eclipse.aether.internal.impl.DefaultRepositorySystem.readArtifactDescriptor (DefaultRepositorySystem.java:286)
+    2023-02-23T11:20:01.6072420Z at org.apache.maven.plugin.internal.DefaultPluginDependenciesResolver.resolve (DefaultPluginDependenciesResolver.java:104)
+    2023-02-23T11:20:01.6072890Z at org.apache.maven.plugin.internal.DefaultMavenPluginManager.getPluginDescriptor (DefaultMavenPluginManager.java:180)
+    2023-02-23T11:20:01.6073360Z at org.apache.maven.plugin.internal.DefaultMavenPluginManager.getMojoDescriptor (DefaultMavenPluginManager.java:265)
+    2023-02-23T11:20:01.6073810Z at org.apache.maven.plugin.DefaultBuildPluginManager.getMojoDescriptor (DefaultBuildPluginManager.java:214)
+    2023-02-23T11:20:01.6074310Z at org.apache.maven.lifecycle.internal.DefaultLifecycleExecutionPlanCalculator.setupMojoExecution (DefaultLifecycleExecutionPlanCalculator.java:155)
+    2023-02-23T11:20:01.6074830Z at org.apache.maven.lifecycle.internal.DefaultLifecycleExecutionPlanCalculator.setupMojoExecutions (DefaultLifecycleExecutionPlanCalculator.java:143)
+    2023-02-23T11:20:01.6075360Z at org.apache.maven.lifecycle.internal.DefaultLifecycleExecutionPlanCalculator.calculateExecutionPlan (DefaultLifecycleExecutionPlanCalculator.java:122)
+    2023-02-23T11:20:01.6075950Z at org.apache.maven.lifecycle.internal.DefaultLifecycleExecutionPlanCalculator.calculateExecutionPlan (DefaultLifecycleExecutionPlanCalculator.java:135)
+    2023-02-23T11:20:01.6076450Z at org.apache.maven.lifecycle.internal.builder.BuilderCommon.resolveBuildPlan (BuilderCommon.java:93)
+    2023-02-23T11:20:01.6076950Z at org.apache.maven.lifecycle.internal.LifecycleModuleBuilder.buildProject (LifecycleModuleBuilder.java:100)
+    2023-02-23T11:20:01.6077460Z at org.apache.maven.lifecycle.internal.LifecycleModuleBuilder.buildProject (LifecycleModuleBuilder.java:73)
+    2023-02-23T11:20:01.6078010Z at org.apache.maven.lifecycle.internal.builder.singlethreaded.SingleThreadedBuilder.build (SingleThreadedBuilder.java:53)
+    2023-02-23T11:20:01.6078510Z at org.apache.maven.lifecycle.internal.LifecycleStarter.execute (LifecycleStarter.java:118)
+    2023-02-23T11:20:01.6078910Z at org.apache.maven.DefaultMaven.doExecute (DefaultMaven.java:260)
+    2023-02-23T11:20:01.6079260Z at org.apache.maven.DefaultMaven.doExecute (DefaultMaven.java:172)
+    2023-02-23T11:20:01.6080180Z at org.apache.maven.DefaultMaven.execute (DefaultMaven.java:100)
+    2023-02-23T11:20:01.6080630Z at org.apache.maven.cli.MavenCli.execute (MavenCli.java:821)
+    2023-02-23T11:20:01.6081080Z at org.apache.maven.cli.MavenCli.doMain (MavenCli.java:270)
+    2023-02-23T11:20:01.6081450Z at org.apache.maven.cli.MavenCli.main (MavenCli.java:192)
+    2023-02-23T11:20:01.6081790Z at jdk.internal.reflect.NativeMethodAccessorImpl.invoke0 (Native Method)
+    2023-02-23T11:20:01.6082520Z at jdk.internal.reflect.NativeMethodAccessorImpl.invoke (NativeMethodAccessorImpl.java:62)
+    2023-02-23T11:20:01.6083070Z at jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke (DelegatingMethodAccessorImpl.java:43)
+    2023-02-23T11:20:01.6083580Z at java.lang.reflect.Method.invoke (Method.java:566)
+    2023-02-23T11:20:01.6083980Z at org.codehaus.plexus.classworlds.launcher.Launcher.launchEnhanced (Launcher.java:282)
+    2023-02-23T11:20:01.6084390Z at org.codehaus.plexus.classworlds.launcher.Launcher.launch (Launcher.java:225)
+    2023-02-23T11:20:01.6084800Z at org.codehaus.plexus.classworlds.launcher.Launcher.mainWithExitCode (Launcher.java:406)
+    2023-02-23T11:20:01.6085190Z at org.codehaus.plexus.classworlds.launcher.Launcher.main (Launcher.java:347)
+```
+
+
+It looks like a typically long and tedious Java stack trace. I noticed there was nothing about "Wagon". I knew
+[Wagon](https://maven.apache.org/wagon/) was a Maven component to download dependencies. Even my first fix attempt
+[configured a Wagon-related property](https://github.com/questdb/questdb/pull/3012/files#diff-1494e9436657033af9f4bc2367589b709b4ecc2cf467a525bb99feef983f87baR21):
+`-Dmaven.wagon.httpconnectionManager.ttlSeconds=30`
+
+So it was suspicious I could not see anything Wagon-related in the exception stack trace. At this point, I resorted to
+the 3rd level of troubleshooting: Reading the source code! The Maven project consists of many components; for a non-expert,
+it's not simple to grasp. Eventually, I made an interesting discovery: Maven dependency resolver supports pluggable (network)
+transports. Digging deeper, I found 2 Transport implementations that can provide HTTP access:
+
+1. The Wagon implementation I knew about
+2. New “Native” implementation
+
+This is the [source code of the Wagon implementation](https://github.com/apache/maven-wagon/blob/88e8574c69d83e6a658fcd2ad10f3f80926b8840/wagon-providers/wagon-http-shared/src/main/java/org/apache/maven/wagon/shared/http/AbstractHttpClientWagon.java#L560). It uses the [Apache HTTP Client](https://hc.apache.org/index.html) internally,
+and it configures it with a retry handler. There are different retry strategies available, and the exact details are
+unimportant. What’s important is that the Wagon transport uses 3 retries by default.
+```java
+private static CloseableHttpClient createClient()
+    {
+        return HttpClientBuilder.create() //
+            .useSystemProperties() //
+            .disableConnectionState() //
+            .setConnectionManager( httpClientConnectionManager ) //
+            .setRetryHandler( createRetryHandler() )
+            .setServiceUnavailableRetryStrategy( createServiceUnavailableRetryStrategy() )
+            .setDefaultAuthSchemeRegistry( createAuthSchemeRegistry() )
+            .setRedirectStrategy( new WagonRedirectStrategy() )
+            .build();
+    }
+[...]
+
+private static HttpRequestRetryHandler createRetryHandler()
+  {
+      switch ( RETRY_HANDLER_CLASS )
+      {
+          case "default":
+              if ( StringUtils.isEmpty( RETRY_HANDLER_EXCEPTIONS ) )
+              {
+                  return new DefaultHttpRequestRetryHandler(
+                          RETRY_HANDLER_COUNT, RETRY_HANDLER_REQUEST_SENT_ENABLED );
+              }
+              return new DefaultHttpRequestRetryHandler(
+                      RETRY_HANDLER_COUNT, RETRY_HANDLER_REQUEST_SENT_ENABLED, getNonRetryableExceptions() )
+              {
+              };
+          case "standard":
+              return new StandardHttpRequestRetryHandler( RETRY_HANDLER_COUNT, RETRY_HANDLER_REQUEST_SENT_ENABLED );
+          default:
+              try
+              {
+                  final ClassLoader classLoader = AbstractHttpClientWagon.class.getClassLoader();
+                  return HttpRequestRetryHandler.class.cast( classLoader.loadClass( RETRY_HANDLER_CLASS )
+                                                                        .getConstructor().newInstance() );
+              }
+              catch ( final Exception e )
+              {
+                  throw new IllegalArgumentException( e );
+              }
+      }
+  }
+```
+
+The new [“Native” transport implementation.](https://github.com/apache/maven-resolver/blob/97dfd1c2b9deb15734d5e401807e55cd0498332a/maven-resolver-transport-http/src/main/java/org/eclipse/aether/transport/http/HttpTransporter.java#L190-L200) From class and package names it’s clear that this is the transport I saw in the exception
+stack traces on the build server. It also uses the Apache HTTP Client internally but does not configure any retrying strategy!
+```java
+this.client = HttpClientBuilder.create()
+        .setUserAgent(userAgent)
+        .setDefaultSocketConfig(socketConfig)
+        .setDefaultRequestConfig(requestConfig)
+        .setDefaultAuthSchemeRegistry(authSchemeRegistry)
+        .setConnectionManager(state.getConnectionManager())
+        .setConnectionManagerShared(true)
+        .setDefaultCredentialsProvider(toCredentialsProvider(server, repoAuthContext, proxy, proxyAuthContext))
+        .setProxy(proxy)
+        .build();
+```
+It appears that Maven is failing quickly instead of attempting to retry when a connection is terminated, because the Native
+transport protocol does not attempt to retry and immediately reports network errors. However, why has this issue arisen
+only recently despite it working correctly in the past? I opened [Maven 3.9 release notes](https://maven.apache.org/docs/3.9.0/release-notes.html#potentially-breaking-core-changes)
+once again. The paragraph _“Potentially Breaking Core Changes”_ did not have anything suspicious. Luckily, I kept reading
+and saw this: _“Switchable and alternative resolver transports included, with default switched to native transport.”_
+Bingo! This must be it.
+
+Here is the hypothesis: We invoke Maven via the [Azure Pipelines Maven Task](https://github.com/microsoft/azure-pipelines-tasks/tree/master/Tasks/MavenV3)
+and we do not [specify Maven version explicitly](https://github.com/questdb/questdb/blob/abbab65949fc8ee2c036a841b789bd99d3057310/ci/templates/steps.yml#L26).
+Hence, it uses the default version, which was recently upgraded to Maven 3.9. And we know from the release notes that Maven
+3.9 switched to the new Native transport which does not support retrying. It is all starting to make sense.
+
+How to test this hypothesis? There were 2 options:
+1. Downgrade Maven to version pre-3.9
+2. Force Maven 3.9 to use the Wagon transport instead of the new Native transport
+
+While browsing Maven source code I stumbled upon a [strategy for selecting transports:](https://github.com/apache/maven/blob/e9d570889ffce29c3f92494510499ae0e32a02cf/maven-core/src/main/java/org/apache/maven/internal/aether/DefaultRepositorySystemSessionFactory.java#L327-L341)
+```java
+private static final String MAVEN_RESOLVER_TRANSPORT_KEY = "maven.resolver.transport";
+private static final String MAVEN_RESOLVER_TRANSPORT_DEFAULT = "default";
+private static final String MAVEN_RESOLVER_TRANSPORT_WAGON = "wagon";
+private static final String MAVEN_RESOLVER_TRANSPORT_NATIVE = "native";
+private static final String MAVEN_RESOLVER_TRANSPORT_AUTO = "auto";
+[...]
+
+Object transport = configProps.getOrDefault(MAVEN_RESOLVER_TRANSPORT_KEY, MAVEN_RESOLVER_TRANSPORT_DEFAULT);
+        if (MAVEN_RESOLVER_TRANSPORT_DEFAULT.equals(transport)) {
+            // The "default" mode (user did not set anything) from now on defaults to AUTO
+        } else if (MAVEN_RESOLVER_TRANSPORT_NATIVE.equals(transport)) {
+            // Make sure (whatever extra priority is set) that resolver native is selected
+            configProps.put(NATIVE_FILE_TRANSPORTER_PRIORITY_KEY, RESOLVER_MAX_PRIORITY);
+            configProps.put(NATIVE_HTTP_TRANSPORTER_PRIORITY_KEY, RESOLVER_MAX_PRIORITY);
+        } else if (MAVEN_RESOLVER_TRANSPORT_WAGON.equals(transport)) {
+            // Make sure (whatever extra priority is set) that wagon is selected
+            configProps.put(WAGON_TRANSPORTER_PRIORITY_KEY, RESOLVER_MAX_PRIORITY);
+        } else if (!MAVEN_RESOLVER_TRANSPORT_AUTO.equals(transport)) {
+            throw new IllegalArgumentException("Unknown resolver transport '" + transport
+                    + "'. Supported transports are: " + MAVEN_RESOLVER_TRANSPORT_WAGON + ", "
+                    + MAVEN_RESOLVER_TRANSPORT_NATIVE + ", " + MAVEN_RESOLVER_TRANSPORT_AUTO);
+        }
+```
+
+I figured out forcing the old Wagon transport was as simple as passing `-Dmaven.resolver.transport=wagon` to my build
+command. I [added the flag](https://github.com/questdb/questdb/pull/3014/commits/5f097649fab2716032cd686c6bd586479bf088b1)
+and waited eagerly for the build results. And it was a success! The first build passed, then a second, third, and fourth.
+All builds were green! Such a relief. Our precious builds were deterministic again. Problem Solved! Or not?
+
+
+## Contributing Back
+
+We all consume open source. Apache Maven itself is open source. It’s so ubiquitous that finding a Java developer who
+wouldn’t use it at least for some projects is impossible. Maven is a basic software infrastructure we all take for granted.
+It’s not backed by a large corporation or by a VC-funded startup. Volunteers maintain it. I felt the least I could do was
+report my experience to the Maven team so they could clarify whether it was intentional behaviour or a bug. I opened a
+ticket [opened a ticket](https://issues.apache.org/jira/browse/MNG-7708) and wanted to move on.
+
+The same evening I saw one of the Maven maintainers created a [new issue](https://issues.apache.org/jira/browse/MRESOLVER-326)
+in the Maven Resolver project and linked it with the top-level Maven project issue I created earlier. I took it as a
+confirmation that the behaviour was not intentional and started to poke the Maven Resolver source code once again. Only
+this time with the intention to fix it.
+
+It turns out the fix was really easy. It was a matter of creating a [retry handler and setting the desired retry count](https://github.com/apache/maven-resolver/pull/253/files#diff-cb82a28d1938522d3e73b0df9a33bf6f80fdb854296bb2020f86fad9c139d22d).
+That is exactly what the old Wagon plugin was doing. A few lines change. Then I was wondering how to test it. None of
+the [existing Resolver tests](https://github.com/apache/maven-resolver/blob/97dfd1c2b9deb15734d5e401807e55cd0498332a/maven-resolver-transport-http/src/test/java/org/eclipse/aether/transport/http/HttpTransporterTest.java#L62) exercised scenarios where a connection to a remote repository fails. The existing tests were using a [Jetty-based server](https://github.com/apache/maven-resolver/blob/97dfd1c2b9deb15734d5e401807e55cd0498332a/maven-resolver-transport-http/src/test/java/org/eclipse/aether/transport/http/HttpServer.java) mimicking a remote repository. So I figured out I could add a fault injection: A Jetty handler which force-closes a predefined number of connections. And then test if the
+resolver can still access the server. Again, [a few lines of code:](https://github.com/apache/maven-resolver/pull/253/files#diff-774033f5c0b952273dd7ab169d053c8038e1074565ff6e99e3345e8a23e033d2R198-R241)
+```java
+private class ConnectionClosingHandler extends AbstractHandler {
+    public void handle(String target, Request req, HttpServletRequest request, HttpServletResponse response) {
+        if (connectionsToClose.getAndDecrement() > 0) {
+            Response jettyResponse = (Response) response;
+            jettyResponse.getHttpChannel().getConnection().close();
+        }
+    }
+}
+```
+
+
+This infrastructure allowed me to write tests similar to this:
+```java
+@Test
+public void testRetryHandler_defaultCount_positive() throws Exception {
+  httpServer.setConnectionsToClose(3);
+  transporter.peek(new PeekTask(URI.create("repo/file.txt")));
+}
+```
+
+Easy-peasy!
+
+I sent the [Pull Request](https://github.com/apache/maven-resolver/pull/253) and was ready to forget about it.
+Merging a PR to new projects can take a while. To my surprise, the maintainers reviewed the PR less than 1 hour after
+submitting it and merged it the next morning. Wow! This is the way to attract new contributors! I admire all people
+maintaining projects like Maven. They do it in their free time, and I reckon they mostly hear from users when something
+is wrong and when users are upset. They deserve recognition for what they do. [Tamas Cservenak](https://twitter.com/cstamas)
+and [Slawomir Jaranowski](https://twitter.com/SlawekJaran) helped me with the PR. If you are reading this: Thank you!
+
+What is the moral of the story?
+1. Troubleshooting is fun
+2. Read release notes carefully
+3. Be grateful to maintainers of basic infrastructure
+4. Contributing back feels good!
