@@ -32,10 +32,11 @@ The following configurations and keywords enable and create WAL tables:
     - `WAL` generates a WAL table.
     - `BYPASS WAL` generates a non-WAL table.
 
-  - Server-wide configuration `cairo.wal.enabled.default`: When
-    `cairo.wal.enabled.default` is set to `true`,
-    [`CREATE TABLE`](/docs/reference/sql/create-table/) SQL keyword generates
-    WAL tables without `WAL` and `BYPASS WAL`.
+  - Server-wide configuration via `cairo.wal.enabled.default`
+
+    - When `cairo.wal.enabled.default` is set to `true`, the
+      [`CREATE TABLE`](/docs/reference/sql/create-table/) SQL keyword generates
+      WAL tables without `WAL`. The `BYPASS WAL` keyword still works as expected.
 
 - Parallel threads to apply WAL data to the table storage can be configured, see
   [WAL table configuration](/docs/reference/configuration/#wal-table-configurations)
@@ -58,7 +59,7 @@ table:
 
 :::note
 
-We are working to reduce the below limitations.
+We are working hard to reduce the below limitations.
 
 :::
 
