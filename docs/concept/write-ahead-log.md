@@ -93,7 +93,7 @@ A WAL table uses the following components to manage concurrent commit requests:
 
 - **Sequencer**: centrally manages transactions, providing a single source of truth.
   The sequencer generates unique `txn` numbers as transaction identifiers
-  and keeps a log tracking any memory allocations. This log is called
+  and keeps a log that tracks their allocation, preventing duplicates. This log is called
   `TransactionLog` and is stored in a meta file called `_txnlog`. See
   [root directory](/docs/concept/root-directory-structure/#db-directory) for
   more information.
